@@ -115,9 +115,9 @@ class CodeGeneratorPython(object):
                 lines.append("message['id']='%03X'" % message.id)
                 lines.append("message['name']='%s'" % message.name)
                 lines.append("message['signals']=[]")
-                
+
                 lines.extend(self._build_signals(message))
-                
+
                 lines.append("CAN_MESSAGES['%03X'] = message" % message.id)
                 lines.append("")
 
