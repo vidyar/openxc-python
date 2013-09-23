@@ -259,6 +259,7 @@ class CodeGeneratorPython(object):
             return ["        %s()" % initializer
                 for initializer in message_set.initializers]
         lines.extend(self._message_set_switcher(block))
+        lines.append("    pass")
         lines.append("")
         return lines
 
@@ -268,6 +269,7 @@ class CodeGeneratorPython(object):
         def block(message_set):
             return ["        %s()" % looper for looper in message_set.loopers]
         lines.extend(self._message_set_switcher(block))
+        lines.append("    pass")
         lines.append("")
         return lines
 
