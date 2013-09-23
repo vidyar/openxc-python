@@ -3,4 +3,5 @@
 # Generated for v{0} of the cantranslator firmware.
 #
 
-from canread import *
+from openxc.generator.canread import *
+from openxc.generator.shared_handlers import *
