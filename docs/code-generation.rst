@@ -8,7 +8,7 @@ generate a valid ``signals.cpp`` file for the `OpenXC vehicle interface firmware
 boilerplate C++ and C-structs by hand, you can maintain the CAN message
 definitions in a much easier to read and modify JSON format. The input format is
 a JSON object like the one found in `signals.json.example
-<https://github.com/openxc/cantranslator/blob/master/src/signals.json.example>`_.
+<https://github.com/openxc/vi-firmware/blob/master/src/signals.json.example>`_.
 
 You must know the CAN message formats of the vehicle you want to use with the
 vehicle interface, as you cannot create these input files without that
@@ -30,7 +30,7 @@ Once you've defined your message set in a JSON file, run the
 
 .. code-block:: sh
 
-    cantranslator/ $ openxc-generate-firmware-code --message-set mycar.json > src/signals.cpp
+    vi-firmware/ $ openxc-generate-firmware-code --message-set mycar.json > src/signals.cpp
 
 Message Set Name
 ================
@@ -119,23 +119,41 @@ database exactly - otherwise, it's an arbitrary name.
 no meaning in code, it can just be handy to be able to refer back to an original
 CAN message definition in another document.
 
-``handler`` - (optional) The name of a function that will be compiled with the
-firmware and should be applied to the entire raw message value (see
+``handlers`` - (optional) An array of names of functions that will be compiled
+with the firmware and should be applied to the entire raw message value (see
 :ref:`message-handlers`).
 
 ``enabled`` - (optional, true by default) Enable or disable all processing of a
 CAN message. By default, a message is enabled. If this flag is false, the CAN
 message and all its signals will be left out of the generated source code.
 
+``max_frequency`` - (default: 0, no limit) If sending raw CAN messages to the
+output interfaces, this controls the maximum frequency (in Hz) that the message
+will be process and let through. If using translated signals, setting a max
+frequency on the message will cascade down to all of the signals within the
+message (unless overridden). The default value (``0``) means that all messages
+will be processed, and there is no limit imposed by the firmware. See the
+``max_frequency`` flag documentation for the signal mapping for more
+information. If you want to make sure you don't miss a change in value even when
+dropping messages, see the ``force_send_changed`` attribute.
+
+``force_send_changed`` - (default: ``false``) Meant to be used in conjunction
+with ``max_frequency``, if this is true a raw CAN message will be sent
+regardless of the given frequency if the value has changed (when using raw CAN
+passthrough). If using translated signals, setting this value on a message will
+cascade down to all of the signals within the message (unless overridden). See
+the ``force_send_changed`` flag documentation for the signal mapping for more
+information.
+
 .. _message-handlers:
 
 Message Handlers
 ----------------
 
-If you need additional control, you can provide a custom handler for the
-entire message to combine multiple signals into a single value (or any
-other arbitrary processing). You can generate 0, 1 or many translated
-messages from one call to your handler function.
+If you need additional control, you can provide custom handlers for the entire
+message to combine multiple signals into a single value (or any other arbitrary
+processing). You can generate 0, 1 or many translated messages from each call to
+a custom handler function.
 
 .. code-block:: c
 
@@ -205,21 +223,26 @@ values from the CAN message (usually an integer). The raw values are specified
 as a list to accommodate multiple raw states being coalesced into a single final
 state (e.g. key off and key removed both mapping to just "off").
 
-``send_frequency`` - (default: 1) Some CAN signals are sent at a very high
-frequency, likely more often than will ever be useful to an application. The
-value of this attribute is used as the denominator in the ratio ``1/x`` to
-determine the percentage of the signals that will be let through. The default
-value (``1``) means that ``1/1`` (i.e. 100%) of the signal values received will
-be translated. Increasing the value will reduce the number of messages that are
-sent - a value of ``10`` means that only ``1/10`` messages (i.e. every 10th
-message) is processed. You don't want to combine this attribute with
-``send_same`` or else you risk missing a status change message if wasn't one of
-the messages the VI decided to let through.
+``max_frequency`` - (default: 0, no limit) Some CAN signals are sent at a very
+high frequency, likely more often than will ever be useful to an application.
+This attribute sets the maximum frequency (Hz) that the signal will be processed
+and let through. The defualt value (``0``) means that all values will be
+processed, and there is no limit imposed by the firmware. If you want to make
+sure you don't miss a change in value even when dropping messages, see the
+``force_send_changed`` attribute. You probably don't want to combine this
+attribute with ``send_same`` or else you risk missing a status change message if
+wasn't one of the messages the VI decided to let through.
 
 ``send_same`` - (default: ``true``) By default, all signals are translated every
 time they are received from the CAN bus. By setting this to ``false``, you can
 force a signal to be sent only if the value has actually changed. This works
 best with boolean and state based signals.
+
+``force_send_changed`` - (default: ``false``) Meant to be used in conjunction
+with ``max_frequency``, if this is true a signal will be sent regardless of the
+given frequency if the value has changed. This is useful for state-based and
+boolean states, where the state change is the most important thing and you don't
+want that message to be dropped.
 
 ``writable`` - (default: ``false``) Set this attribute to ``true`` to allow this
 signal to be written back to the CAN bus by an application. OpenXC
@@ -332,7 +355,7 @@ readability.
 
 For an example of a message set using mappings, see the
 `mapped-signals.json.example
-<https://github.com/openxc/cantranslator/blob/master/src/mapped-signals.json.example>`_
+<https://github.com/openxc/vi-firmware/blob/master/src/mapped-signals.json.example>`_
 file in the repository.
 
 The ``mappings`` field must be a list of JSON objects with:

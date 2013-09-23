@@ -8,44 +8,17 @@ from __future__ import absolute_import
 
 import argparse
 import curses
-import numbers
 from datetime import datetime
 
 from .common import device_options, configure_logging, select_device
 from openxc.vehicle import Vehicle
-from openxc.measurements import EventedMeasurement, NumericMeasurement, \
-        Measurement
-import openxc.measurements as measurements
+from openxc.measurements import EventedMeasurement, Measurement
 
 try:
     unicode
 except NameError:
     # Python 3
     basestring = unicode = str
-
-
-DASHBOARD_MEASUREMENTS  = [measurements.AcceleratorPedalPosition,
-                measurements.FuelLevel,
-                measurements.VehicleSpeed,
-                measurements.EngineSpeed,
-                measurements.FuelConsumed,
-                measurements.Latitude,
-                measurements.Longitude,
-                measurements.Odometer,
-                measurements.SteeringWheelAngle,
-                measurements.TorqueAtTransmission,
-                measurements.LateralAcceleration,
-                measurements.LongitudinalAcceleration,
-                measurements.BrakePedalStatus,
-                measurements.HeadlampStatus,
-                measurements.HighBeamStatus,
-                measurements.ParkingBrakeStatus,
-                measurements.WindshieldWiperStatus,
-                measurements.IgnitionStatus,
-                measurements.TransmissionGearPosition,
-                measurements.TurnSignalStatus,
-                measurements.ButtonEvent,
-                measurements.DoorStatus]
 
 
 # timedelta.total_seconds() is only in 2.7, so we backport it here for 2.6
@@ -63,39 +36,54 @@ def sizeof_fmt(num):
 
 
 class DataPoint(object):
+
     def __init__(self, measurement_type):
         self.event = ''
-        self.bad_data = 0
         self.current_data = None
         self.events = {}
         self.messages_received = 0
         self.measurement_type = measurement_type
+        self.min = None
+        self.max = None
 
     def update(self, measurement):
         self.messages_received += 1
         self.current_data = measurement
+
+        if getattr(self.current_data.value, 'unit', None) == self.current_data.unit:
+            if self.min is None or self.current_data.value < self.min:
+                self.min = self.current_data.value
+            elif self.max is None or self.current_data.value > self.max:
+                self.max = self.current_data.value
+
         if isinstance(measurement, EventedMeasurement):
             if measurement.valid_state():
                 self.events[measurement.value] = measurement.event
-            else:
-                self.bad_data += 1
-        elif (isinstance(measurement, NumericMeasurement) and not
-                measurement.within_range()):
-            self.bad_data += 1
+
+    def percentage(self):
+        # TODO man, this is getting really ugly to handle all of the different
+        # types
+        percent = None
+        if hasattr(self.measurement_type, 'valid_range'):
+            percent = self.current_data.percentage_within_range()
+        elif (getattr(self, 'min', None) is not None and
+                getattr(self, 'max', None) is not None) and self.min != self.max:
+            percent = (((self.current_data.value - self.min) / float(self.max -
+                    self.min)) * 100).num
+        return percent
 
     def print_to_window(self, window, row, started_time):
         width = window.getmaxyx()[1]
-        window.addstr(row, 0, self.measurement_type.name)
+        window.addstr(row, 0, self.current_data.name)
         if self.current_data is not None:
-            if (self.measurement_type.DATA_TYPE == numbers.Number and
-                    self.bad_data == 0):
-                # TODO leaking the unit class member here
-                percent = ((self.current_data.value.num -
-                    self.measurement_type.valid_range.min) /
-                        float(self.measurement_type.valid_range.spread)) * 100
-                chunks = int((percent - .1) * .1)
-                graph = "*%s|%s*" % ("-" * chunks, "-" * (10 - chunks))
-                window.addstr(row, 30, graph)
+            value_indent = 0
+            if width > 60:
+                percentage = self.percentage()
+                value_indent = 15
+                if percentage is not None:
+                    chunks = int((percentage - .1) * .1)
+                    graph = "%s=%s" % ("-" * chunks, "-" * (10 - chunks))
+                    window.addstr(row, 30, graph)
 
             if len(self.events) == 0:
                 value = str(self.current_data)
@@ -106,33 +94,16 @@ class DataPoint(object):
                     result += "%s: %s " % (value, self.events.get(item, "?"))
                 value = result
 
-            if self.bad_data > 0:
-                value += " (invalid)"
-                value_color = curses.color_pair(1)
-            else:
-                value_color = curses.color_pair(0)
-            window.addstr(row, 45, value, value_color)
-
-        if self.bad_data > 0:
-            bad_data_color = curses.color_pair(1)
-        else:
-            bad_data_color = curses.color_pair(2)
+            value_color = curses.color_pair(2)
+            window.addstr(row, 30 + value_indent, value, value_color)
 
         if width > 90:
-            window.addstr(row, 80, "Errors: %d" % self.bad_data,
-                    bad_data_color)
-
-        if self.messages_received > 0:
-            message_count_color = curses.color_pair(0)
-        else:
             message_count_color = curses.color_pair(3)
-
-        if width > 100:
-            window.addstr(row, 95, "Messages: " + str(self.messages_received),
+            window.addstr(row, 80, "Messages: " + str(self.messages_received),
                     message_count_color)
 
-        if width >= 125:
-            window.addstr(row, 110, "Frequency (Hz): %d" %
+        if width >= 115:
+            window.addstr(row, 100, "Freq. (Hz): %d" %
                     (self.messages_received /
                         (total_seconds(datetime.now() - started_time) + 0.1)))
 
@@ -141,10 +112,7 @@ class Dashboard(object):
     def __init__(self, window, vehicle):
         self.window = window
         self.elements = {}
-        for measurement_type in DASHBOARD_MEASUREMENTS:
-            self.elements[Measurement.name_from_class(
-                    measurement_type)] = DataPoint(measurement_type)
-            vehicle.listen(measurement_type, self.receive)
+        vehicle.listen(Measurement, self.receive)
 
         self.started_time = datetime.now()
         self.messages_received = 0
@@ -159,6 +127,9 @@ class Dashboard(object):
             self.started_time = datetime.now()
         self.messages_received += 1
 
+
+        if measurement.name not in self.elements:
+            self.elements[measurement.name] = DataPoint(measurement.__class__)
         self.elements[measurement.name].update(measurement)
         if not data_remaining:
             self._redraw()
@@ -168,7 +139,7 @@ class Dashboard(object):
         self.window.erase()
         max_rows = self.window.getmaxyx()[0] - 4
         for row, element in enumerate(sorted(self.elements.values(),
-                key=lambda elt: elt.measurement_type.name)):
+                key=lambda elt: elt.current_data.name)):
             if row > max_rows:
                 break
             element.print_to_window(self.window, row, self.started_time)

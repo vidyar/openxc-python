@@ -19,13 +19,15 @@ class Command(object):
 
 class Message(object):
     def __init__(self, bus_name=None, id=None, name=None,
-            bit_numbering_inverted=None, handler=None, enabled=True):
+            bit_numbering_inverted=None, handlers=None, enabled=True):
         self.bus_name = bus_name
         self.id = id
         self.name = name
         self.bit_numbering_inverted = bit_numbering_inverted
-        self.handler = handler
+        self.handlers = handlers or []
         self.enabled = enabled
+        self.max_frequency = 0
+        self.force_send_changed = False
         self.signals = defaultdict(Signal)
 
     @property
@@ -45,7 +47,16 @@ class Message(object):
         self.name = self.name or data.get('name', None)
         self.bit_numbering_inverted = (self.bit_numbering_inverted or
                 data.get('bit_numbering_inverted', None))
-        self.handler = self.handler or data.get('handler', None)
+        self.max_frequency = data.get('max_frequency', self.max_frequency)
+        self.force_send_changed = data.get('force_send_changed',
+                self.force_send_changed)
+        self.handlers.extend(data.get('handlers', []))
+        if 'handler' in data:
+            # Support deprecated single 'handler' field
+            self.handlers.append(data.get('handler'))
+            LOG.warning("The 'handler' attribute on the message " +
+                    "%s is deprecated but will still work for " % self.name +
+                    "now - the replacement is a 'handlers' array")
         if self.enabled is None:
             self.enabled = data.get('enabled', True)
         else:
@@ -53,6 +64,18 @@ class Message(object):
 
         if 'signals' in data:
             self.merge_signals(data['signals'])
+
+        if getattr(self, 'message_set'):
+            self.bus = self.message_set.lookup_bus(self.bus_name)
+            if not self.bus.valid():
+                self.enabled = False
+                msg = ""
+                if self.bus is None:
+                    msg = "Bus '%s' is invalid, only %s are defined" % (
+                            self.bus_name, list(self.message_set.valid_buses()))
+                else:
+                    msg = "Bus '%s' is disabled" % self.bus_name
+                LOG.warning("%s - message 0x%x will be disabled" % (msg, self.id))
 
     def merge_signals(self, data):
         for signal_name, signal_data in data.items():
@@ -96,11 +119,20 @@ class Message(object):
     def __str__(self):
         bus_index = self.message_set.lookup_bus_index(self.bus_name)
         if bus_index is not None:
-            return "{&CAN_BUSES[%d][%d], 0x%x}, // %s" % (
-                    self.message_set.index, bus_index, self.id, self.name)
+            return "{&CAN_BUSES[%d][%d], 0x%x, {%d}, %s}, // %s" % (
+                    self.message_set.index, bus_index, self.id,
+                    self.max_frequency,
+                    str(self.force_send_changed).lower(),
+                    self.name)
         else:
-            LOG.warning("Bus address '%s' is invalid, only %s are allowed - message 0x%x will be disabled\n" %
-                    (self.bus_name, CanBus.VALID_BUS_ADDRESSES, self.id))
+            bus = self.message_set.lookup_bus(self.bus_name)
+            msg = ""
+            if bus is None:
+                msg = "Bus '%s' is invalid, only %s are defined" % (
+                        self.bus_name, list(self.message_set.valid_buses()))
+            else:
+                msg = "Bus '%s' is disabled" % self.bus_name
+            LOG.warning("%s - message 0x%x will be disabled\n" % (msg, self.id))
         return ""
 
 class CanBus(object):
@@ -143,6 +175,10 @@ class CanBus(object):
         return result.format(bus_speed=self.speed, controller=self.controller)
 
 
+class BitInversionError(Exception):
+    pass
+
+
 class Signal(object):
     def __init__(self, message_set=None, message=None, states=None, **kwargs):
         self.message_set = message_set
@@ -158,12 +194,13 @@ class Signal(object):
         self.offset = 0
         self.min_value = 0.0
         self.max_value = 0.0
-        self.ignore = False
-        self.send_frequency = 1
+        self.max_frequency = None
         self.send_same = True
-        self.writable=False
+        self.force_send_changed = None
+        self.writable = False
         self.enabled = True
         self.ignore = False
+        self.bit_numbering_inverted = None
         self.states = states or []
 
         self.merge_signal(kwargs)
@@ -178,17 +215,24 @@ class Signal(object):
         self.offset = data.get('offset', self.offset)
         self.min_value = data.get('min_value', self.min_value)
         self.max_value = data.get('max_value', self.max_value)
-        self.handler = data.get('handler', self.handler)
+        # Kind of nasty, but we want to avoid actually setting one of the
+        # implicit handlers on the object (and then later on, assuming that it
+        # was set explicitly)
+        self.handler = data.get('handler', getattr(self, '_handler', None))
         self.writable = data.get('writable', self.writable)
         self.write_handler = data.get('write_handler', self.write_handler)
         self.send_same = data.get('send_same', self.send_same)
+        self.force_send_changed = data.get('force_send_changed',
+                self.force_send_changed)
         self.ignore = data.get('ignore', self.ignore)
-        # the frequency determines how often the message should be propagated. a
-        # frequency of 1 means that every time the signal it is received we will
-        # try to handle it. a frequency of 2 means that every other signal
-        # will be handled (and the other half is ignored). This is useful for
-        # trimming down the data rate of the stream over USB.
-        self.send_frequency = data.get('send_frequency', self.send_frequency)
+        self.max_frequency = data.get('max_frequency', self.max_frequency)
+        self.bit_numbering_inverted = data.get('bit_numbering_inverted',
+                self.bit_numbering_inverted)
+
+        if 'send_frequency' in data:
+            LOG.warning("The 'send_frequency' attribute in the signal " +
+                    "%s is deprecated and has no effect " % self.generic_name +
+                    " - see the replacement, max_frequency")
 
     @property
     def handler(self):
@@ -196,7 +240,7 @@ class Signal(object):
         if handler is None:
             if self.ignore:
                 handler = "ignoreHandler"
-            if len(self.states) > 0:
+            elif len(self.states) > 0:
                 handler = "stateHandler"
         return handler
 
@@ -214,6 +258,28 @@ class Signal(object):
     @enabled.setter
     def enabled(self, value):
         self._enabled = value
+
+    @property
+    def max_frequency(self):
+        max_freq = getattr(self, '_max_frequency', None)
+        if max_freq is None and self.message is not None:
+            max_freq = self.message.max_frequency
+        return max_freq
+
+    @max_frequency.setter
+    def max_frequency(self, value):
+        self._max_frequency = value
+
+    @property
+    def force_send_changed(self):
+        force_send = getattr(self, '_force_send_changed', None)
+        if force_send is None and self.message is not None:
+            force_send = self.message.force_send_changed
+        return force_send
+
+    @force_send_changed.setter
+    def force_send_changed(self, value):
+        self._force_send_changed = value
 
     @property
     def sorted_states(self):
@@ -240,19 +306,20 @@ class Signal(object):
         return translated_value
 
     def validate(self):
-        if self.send_same is False and self.send_frequency != 1:
+        if self.send_same is False and self.max_frequency > 0:
             LOG.warning("Signal %s combines send_same and " % self.generic_name +
-                    "send_frequency - this is not recommended")
+                    "max_frequency - this is not recommended")
         if self.bit_position == None or self.bit_size == None:
-            LOG.warning("%s (generic name: %s) is incomplete\n" %
+            LOG.error("%s (generic name: %s) is incomplete\n" %
                     (self.name, self.generic_name))
             return False
         return True
 
     @property
     def bit_position(self):
-        if getattr(self, '_bit_position', None) is not None and getattr(
-                self.message, 'bit_numbering_inverted', False):
+        if (getattr(self, '_bit_position', None) is not None and getattr(
+                self.message, 'bit_numbering_inverted', False) and
+                self.bit_numbering_inverted in [None, True]):
             return self._invert_bit_index(self._bit_position, self.bit_size)
         else:
             return self._bit_position
@@ -262,19 +329,26 @@ class Signal(object):
         self._bit_position = value
 
     @classmethod
-    def _invert_bit_index(cls, i, l):
-        (b, r) = divmod(i, 8)
+    def _invert_bit_index(cls, bit_index, length):
+        (b, r) = divmod(bit_index, 8)
         end = (8 * b) + (7 - r)
-        return(end - l + 1)
+        inverted_index = end - length + 1
+        if inverted_index < 0:
+            raise BitInversionError("Bit index %d with length %d cannot be " %
+                        (bit_index, length) +
+                    "inverted - you probably have need the "
+                    "'bit_numbering_inverted' flag in your JSON mapping")
+        return inverted_index
 
     def __str__(self):
         result =  ("{&CAN_MESSAGES[%d][%d], \"%s\", %s, %d, %f, %f, %f, %f, "
-                    "%d, %s, false, " % (
+                    "{%d}, %s, %s, " % (
                 self.message_set.index,
                 self.message_set.lookup_message_index(self.message),
                 self.generic_name, self.bit_position, self.bit_size,
                 self.factor, self.offset, self.min_value, self.max_value,
-                self.send_frequency, str(self.send_same).lower()))
+                self.max_frequency, str(self.send_same).lower(),
+                str(self.force_send_changed).lower()))
         if len(self.states) > 0:
             result += "SIGNAL_STATES[%d][%d], %d" % (self.message_set.index,
                     self.states_index, len(self.states))

@@ -224,7 +224,6 @@ class CodeGeneratorPython(object):
                 lines.append("signal['offset']=%f" % signal.offset)
                 lines.append("signal['min_value']=%f" % signal.min_value)
                 lines.append("signal['max_value']=%f" % signal.max_value)
-                lines.append("signal['frequency']=%d" % signal.send_frequency)
                 lines.append("signal['send_same']=%s" % signal.send_same)
                 lines.append("signal['handler']=%s" % signal.handler)
                 lines.append("signal['received']=False")

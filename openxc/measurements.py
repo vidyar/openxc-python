@@ -1,5 +1,7 @@
 """Vehicle data measurement types pre-defined in OpenXC."""
 import numbers
+import sys
+import inspect
 
 import openxc.units as units
 from .utils import Range, AgingData
@@ -11,12 +13,20 @@ except NameError:
     basestring = unicode = str
 
 
+def all_measurements():
+    for name, obj in inspect.getmembers(sys.modules[__name__]):
+        if inspect.isclass(obj) and Measurement in obj.mro() and hasattr(
+                obj, 'name'):
+            yield obj
+
+
 class Measurement(AgingData):
     """The Measurement is the base type of all values read from an OpenXC
     vehicle interface. All values encapsulated in a Measurement have an
     associated scalar unit (e.g. meters, degrees, etc) to avoid crashing a rover
     into Mars.
     """
+    name = 'generic'
     DATA_TYPE = numbers.Number
     _measurement_map = {}
     unit = units.Undefined
@@ -39,10 +49,8 @@ class Measurement(AgingData):
         """
         super(Measurement, self).__init__()
         self.name = name
-        if self.unit != units.Undefined and override_unit:
-            if type(value) == unicode:
-                raise UnrecognizedMeasurementError("%s value cannot be a string"
-                        % self.__class__)
+        if (not isinstance(value, bool) and isinstance(value, numbers.Number)
+                and override_unit):
             value = self.unit(value)
         self.value = value
         self.event = event
@@ -103,10 +111,15 @@ class Measurement(AgingData):
             UnrecognizedMeasurementError: if the class does not have a valid
                 generic name
         """
+        if not getattr(cls, '_measurements_initialized', False):
+            cls._measurement_map = dict((m.name, m) for m in all_measurements())
+            cls._measurements_initialized = True
+
         try:
             name = getattr(measurement_class, 'name')
         except AttributeError:
-            raise UnrecognizedMeasurementError()
+            raise UnrecognizedMeasurementError("No 'name' attribute in %s" %
+                    measurement_class)
         else:
             cls._measurement_map[name] = measurement_class
             return name
@@ -129,6 +142,10 @@ class NumericMeasurement(NamedMeasurement):
     acceptable values.
     """
     valid_range = None
+
+    def percentage_within_range(self):
+        return ((self.value.num - self.valid_range.min) /
+                float(self.valid_range.spread)) * 100
 
     def within_range(self):
         return self.valid_range.within_range(self.value.num)

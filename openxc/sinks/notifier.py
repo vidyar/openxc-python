@@ -3,9 +3,12 @@
 """
 from threading import Thread
 from collections import defaultdict
+import logging
 
 from openxc.measurements import Measurement, UnrecognizedMeasurementError
 from .queued import QueuedSink
+
+LOG = logging.getLogger(__name__)
 
 
 class MeasurementNotifierSink(QueuedSink):
@@ -37,7 +40,9 @@ class MeasurementNotifierSink(QueuedSink):
                 ].remove(callback)
 
     def _propagate(self, measurement, **kwargs):
-        for callback in self.callbacks[measurement.name]:
+        measurement_callbacks = self.callbacks[measurement.name]
+        measurement_callbacks.update(self.callbacks[Measurement.name])
+        for callback in measurement_callbacks:
             try:
                 callback(measurement, **kwargs)
             except TypeError:
@@ -59,5 +64,4 @@ class MeasurementNotifierSink(QueuedSink):
                     self.callback(measurement, **kwargs)
                     self.queue.task_done()
                 except UnrecognizedMeasurementError as e:
-                    # TODO add some logging
-                    pass
+                    LOG.warn(e)

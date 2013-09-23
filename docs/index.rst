@@ -32,7 +32,8 @@ USB Backend
 -------------
 
 If you intend to use the library to connect to a CAN translator via USB, you
-must also install a native USB backend - ``libusb-1.0`` is the recommended library.
+must also install a native USB backend - ``libusb-1.0`` is the recommended
+library (`libusb-win32` on Cygwin, **not** `libusb`).
 
 - **Mac OS X**
 
@@ -57,17 +58,20 @@ must also install a native USB backend - ``libusb-1.0`` is the recommended libra
 - **Cygwin in Windows**
 
     Install ``libusb-win32`` from the Cygwin ``setup.exe`` and the USB driver
-    from the `cantranslator repository`_.
+    from the `vi-firmware repository`_. If you get the error ``Skipping USB
+    device: [Errno 88] Operation not supported or unimplemented on this
+    platform`` make sure you **do not** have the ``libusb`` package installed as
+    well - that one is explicitly not compatible.
 
-.. _`cantranslator repository`: https://github.com/openxc/cantranslator/tree/master/conf/windows-driver
+.. _`vi-firmware repository`: https://github.com/openxc/vi-firmware/tree/master/conf/windows-driver
 
 Serial Backend
 --------------
 
 If you intend to use the library with Python 3 and you want to connect to a CAN
 translator via a USB-Serial or other UART connection, you must install the
-``pyserial`` Python library manually. There is an [outstanding
-bug](https://github.com/openxc/openxc-python/issues/1) in the ``pyserial`` library
+``pyserial`` Python library manually. There is an `outstanding bug
+<https://github.com/openxc/openxc-python/issues/1`_ in the ``pyserial`` library
 that blocks installation as a dependency in Python 3. It works fine if you
 install it manually:
 
@@ -121,7 +125,7 @@ VI Firmware Code Generation
 
 For information on the code generation tools for the `OpenXC vehicle interface
 firmware <http://vi-firmware.openxcplatform.com>`_ (previous a part of the
-`cantranslator <https://github.com/openxc/cantranslator>`_ repository), see the
+`vi-firmware <https://github.com/openxc/vi-firmware>`_ repository), see the
 :doc:`code generation documentation <code-generation>`.
 
 .. toctree::
@@ -147,7 +151,6 @@ Vehicle API Reference
 
     api/*
 
-
 Contributing
 ============
 
@@ -155,6 +158,23 @@ Development of ``openxc-python`` happens at `GitHub`_. Be sure to see our `contr
 
 .. _`GitHub`: https://github.com/openxc/openxc-python
 .. _`contribution document`: https://github.com/openxc/openxc-python/blob/master/CONTRIBUTING.rst
+
+Test Suite
+----------
+
+The ``openxc-python`` repository contains a test suite that can be run with the
+``tox`` tool, which attemps to run the test suite in Python 2.6, 2.7 and 3.3. If
+you wish to just run the test suite in your primary Python version, run
+
+.. code-block:: sh
+
+    $ python setup.py test
+
+To run it with tox:
+
+.. code-block:: sh
+
+    $ tox
 
 Mailing list
 ------------

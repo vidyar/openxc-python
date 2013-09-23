@@ -17,7 +17,7 @@ class CodeGenerator(object):
     """
 
     MAX_SIGNAL_STATES = 12
-    GENERATED_CODE_VERSION = "4.0"
+    GENERATED_CODE_VERSION = "5.x"
 
     def __init__(self, search_paths):
         self.search_paths = search_paths
@@ -95,7 +95,7 @@ class CodeGenerator(object):
         lines = []
         lines.append("const int MAX_MESSAGE_COUNT = %d;" %
                 self._max_message_count())
-        lines.append("CanMessage CAN_MESSAGES[][MAX_MESSAGE_COUNT] = {")
+        lines.append("CanMessageDefinition CAN_MESSAGES[][MAX_MESSAGE_COUNT] = {")
 
         def block(message_set):
             lines = []
@@ -181,7 +181,7 @@ class CodeGenerator(object):
                 self.MAX_SIGNAL_STATES)
         lines.append("const int MAX_SIGNAL_COUNT = %d;" %
                 self._max_signal_count())
-        lines.append("CanSignalState SIGNAL_STATES[]"
+        lines.append("const CanSignalState SIGNAL_STATES[]"
                 "[MAX_SIGNAL_COUNT][MAX_SIGNAL_STATES] = {")
 
         def block(message_set, **kwargs):
@@ -310,13 +310,13 @@ class CodeGenerator(object):
                 for message in bus.active_messages():
                     lines.append(" " * 12 + "case 0x%x: // %s" % (message.id,
                             message.name))
-                    if message.handler is not None:
+                    for handler in message.handlers:
                         lines.append(" " * 16 + "%s(id, data, SIGNALS[%d], " % (
-                            message.handler, message_set.index) +
+                            handler, message_set.index) +
                                 "getSignalCount(), pipeline);")
                     for signal in sorted((s for s in message.signals.values()),
                             key=operator.attrgetter('generic_name')):
-                        if not signal.enabled:
+                        if not signal.enabled or signal.ignore:
                             continue
                         line = " " * 16
                         line += ("can::read::translateSignal(pipeline, "
@@ -336,8 +336,8 @@ class CodeGenerator(object):
         lines.extend(self._message_set_switcher(block))
 
         if self._max_message_count() == 0:
-            lines.append("    openxc::can::read::passthroughMessage(pipeline, "
-                    "id, data);")
+            lines.append("    openxc::can::read::passthroughMessage("
+                    "id, data, getMessages(), getMessageCount(), pipeline);")
 
         lines.append("}")
         lines.append("")
