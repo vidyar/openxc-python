@@ -6,4 +6,4 @@ before_install:
     - pip install pyserial
 script: python setup.py test
 after_success :
-git@heroku.com:secure-savannah-7488.git
+- git@heroku.com:secure-savannah-7488.git
